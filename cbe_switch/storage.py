@@ -26,7 +26,7 @@ def utc_now() -> str:
 
 class ConfigStore:
     def __init__(self, root: Path | None = None, codex_home: Path | None = None):
-        self.root = Path(root or os.environ.get("CBE_SWITCH_HOME", Path.home() / ".config" / "cbe-switch")).expanduser()
+        self.root = Path(root or os.environ.get("CBE_SWITCH_HOME", Path.home() / ".config" / "switch-sync-everywhere")).expanduser()
         self.codex_home = Path(codex_home or os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
         self.profiles_dir = self.root / "profiles"
         self.backups_dir = self.root / "backups"
@@ -206,4 +206,3 @@ class ConfigStore:
                 target.unlink()
         self._write_json(self.state_path, {"active_profile_id": None, "restored_backup_id": backup_id, "restored_at": utc_now()})
         return manifest
-

@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .storage import ConfigStore, ValidationError
 
-app = FastAPI(title="CBE Switch")
+app = FastAPI(title="Switch-Sync-Everywhere")
 store = ConfigStore()
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -103,4 +103,3 @@ def restore_backup(backup_id: str) -> dict[str, Any]:
         return store.restore(backup_id)
     except Exception as exc:
         raise error(exc) from exc
-

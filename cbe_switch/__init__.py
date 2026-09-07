@@ -1,2 +1,1 @@
-"""CBE Switch local configuration manager."""
-
+"""Switch-Sync-Everywhere local configuration manager."""
