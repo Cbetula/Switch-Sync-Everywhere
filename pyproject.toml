@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cbe-switch"
+version = "0.1.0"
+description = "Local web configuration switcher for Codex"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.30,<1",
+]
+
+[project.scripts]
+cbe-switch = "cbe_switch.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["cbe_switch*"]
+
