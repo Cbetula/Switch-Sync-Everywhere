@@ -58,6 +58,18 @@ class ConfigStore:
         return PLACEHOLDER_RE.sub(lambda m: value[m.group(1)], template)
 
     def render(self, config_template: str, auth_template: str, key: str, url: str) -> tuple[str, str]:
+        # These values must stay parameterized so credentials and endpoints are
+        # never baked into a profile template.
+        if not re.search(r"(?m)^\s*base_url\s*=\s*[\"']\s*{{\s*URL\s*}}\s*[\"']", config_template):
+            raise ValidationError("config.toml 的 base_url 必须使用 {{URL}} 宏")
+        if not re.search(r"(?m)^\s*experimental_bearer_token\s*=\s*[\"']\s*{{\s*KEY\s*}}\s*[\"']", config_template):
+            raise ValidationError("config.toml 的 experimental_bearer_token 必须使用 {{KEY}} 宏")
+        try:
+            auth_probe = json.loads(self._validate_and_render(auth_template, {"KEY": "__KEY__", "URL": "__URL__"}, "auth.json"))
+        except json.JSONDecodeError as exc:
+            raise ValidationError(f"auth.json 校验失败: {exc.msg}") from exc
+        if not isinstance(auth_probe, dict) or auth_probe.get("api_key") != "__KEY__":
+            raise ValidationError("auth.json 的 api_key 必须使用 {{KEY}} 宏")
         config = self._validate_and_render(config_template, {"KEY": key, "URL": url}, "config.toml")
         auth = self._validate_and_render(auth_template, {"KEY": key, "URL": url}, "auth.json")
         try:
@@ -97,18 +109,21 @@ class ConfigStore:
         meta = self._read_json(directory / "meta.json")
         if not isinstance(meta, dict):
             raise FileNotFoundError(profile_id)
+        config_template = (directory / "config.toml").read_text(encoding="utf-8")
+        auth_template = (directory / "auth.json").read_text(encoding="utf-8")
+        config, auth = self.render(config_template, auth_template, meta.get("key", ""), meta.get("url", ""))
         return {
             **meta,
-            "config_template": (directory / "config.toml").read_text(encoding="utf-8"),
-            "auth_template": (directory / "auth.json").read_text(encoding="utf-8"),
+            "config_template": config,
+            "auth_template": auth,
         }
 
     def save_profile(self, payload: dict[str, Any], profile_id: str | None = None) -> dict[str, Any]:
         name = str(payload.get("name", "")).strip()
         key = str(payload.get("key", ""))
         url = str(payload.get("url", "")).strip()
-        config_template = str(payload.get("config_template", ""))
-        auth_template = str(payload.get("auth_template", ""))
+        config_template = self._to_template(str(payload.get("config_template", "")), key, url)
+        auth_template = self._to_auth_template(str(payload.get("auth_template", "")), key)
         if not name:
             raise ValidationError("名称不能为空")
         if not url:
@@ -128,6 +143,14 @@ class ConfigStore:
         (directory / "auth.json").write_text(auth_template, encoding="utf-8")
         self._write_json(directory / "meta.json", meta)
         return self.get_profile(profile_id)
+
+    def _to_template(self, value: str, key: str, url: str) -> str:
+        value = re.sub(r'(?m)^(\s*base_url\s*=\s*)["\'].*?["\']\s*$', r'\1"{{URL}}"', value)
+        value = re.sub(r'(?m)^(\s*experimental_bearer_token\s*=\s*)["\'].*?["\']\s*$', r'\1"{{KEY}}"', value)
+        return value
+
+    def _to_auth_template(self, value: str, key: str) -> str:
+        return re.sub(r'("api_key"\s*:\s*)"(?:[^"\\]|\\.)*"', r'\1"{{KEY}}"', value, count=1)
 
     def delete_profile(self, profile_id: str) -> None:
         directory = self._profile_dir(profile_id)
@@ -190,6 +213,20 @@ class ConfigStore:
                 result.append(manifest)
         return result
 
+    def get_backup(self, backup_id: str) -> dict[str, Any]:
+        if not re.fullmatch(r"[0-9TZ-]+-[a-f0-9]{8}", backup_id):
+            raise ValidationError("无效的备份 ID")
+        backup = self.backups_dir / backup_id
+        manifest = self._read_json(backup / "manifest.json")
+        if not isinstance(manifest, dict):
+            raise FileNotFoundError(backup_id)
+        result = {**manifest, "config": "", "auth": ""}
+        for name, key in (("config.toml", "config"), ("auth.json", "auth")):
+            source = backup / name
+            if source.exists():
+                result[key] = source.read_text(encoding="utf-8")
+        return result
+
     def restore(self, backup_id: str) -> dict[str, Any]:
         if not re.fullmatch(r"[0-9TZ-]+-[a-f0-9]{8}", backup_id):
             raise ValidationError("无效的备份 ID")
@@ -205,4 +242,13 @@ class ConfigStore:
             elif not existed and target.exists():
                 target.unlink()
         self._write_json(self.state_path, {"active_profile_id": None, "restored_backup_id": backup_id, "restored_at": utc_now()})
-        return manifest
+        result = {**manifest, "config": "", "auth": ""}
+        for name, key in (("config.toml", "config"), ("auth.json", "auth")):
+            source = backup / name
+            if source.exists():
+                result[key] = source.read_text(encoding="utf-8")
+            else:
+                target = self.codex_home / name
+                if target.exists():
+                    result[key] = target.read_text(encoding="utf-8")
+        return result
