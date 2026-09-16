@@ -14,6 +14,12 @@ from typing import Any
 PLACEHOLDER_RE = re.compile(r"{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}")
 ALL_PLACEHOLDER_RE = re.compile(r"{{\s*([^{}]+?)\s*}}")
 ALLOWED_PLACEHOLDERS = {"KEY", "URL"}
+DEFAULT_PERMISSION_MODE = "ask"
+PERMISSION_MODES = {
+    "ask": {"approval_policy": "on-request", "approvals_reviewer": "user", "sandbox_mode": "workspace-write"},
+    "approve-for-me": {"approval_policy": "on-request", "approvals_reviewer": "auto_review", "sandbox_mode": "workspace-write"},
+    "full-access": {"approval_policy": "never", "approvals_reviewer": "user", "sandbox_mode": "danger-full-access"},
+}
 
 
 class ValidationError(ValueError):
@@ -57,11 +63,14 @@ class ConfigStore:
             raise ValidationError(f"{kind} 包含未知占位符: {', '.join(unknown)}")
         return PLACEHOLDER_RE.sub(lambda m: value[m.group(1)], template)
 
-    def render(self, config_template: str, auth_template: str, key: str, url: str) -> tuple[str, str]:
+    def render(self, config_template: str, auth_template: str, key: str, url: str, permission_mode: str = DEFAULT_PERMISSION_MODE) -> tuple[str, str]:
         # These values must stay parameterized so credentials and endpoints are
         # never baked into a profile template.
+        if permission_mode not in PERMISSION_MODES:
+            raise ValidationError("无效的权限模式")
         config_template = self._to_template(config_template, key, url)
         auth_template = self._to_auth_template(auth_template, key)
+        config_template = self._with_permission(config_template, permission_mode)
         if not re.search(r"(?m)^\s*base_url\s*=\s*[\"']\s*{{\s*URL\s*}}\s*[\"']", config_template):
             raise ValidationError("config.toml 的 base_url 必须使用 {{URL}} 宏")
         if not re.search(r"(?m)^\s*experimental_bearer_token\s*=\s*[\"']\s*{{\s*KEY\s*}}\s*[\"']", config_template):
@@ -86,6 +95,17 @@ class ConfigStore:
         except json.JSONDecodeError as exc:
             raise ValidationError(f"auth.json 校验失败: {exc.msg}") from exc
         return config, auth
+
+    def _with_permission(self, template: str, permission_mode: str) -> str:
+        """Keep Codex permission keys at the root of config.toml."""
+        settings = PERMISSION_MODES[permission_mode]
+        template = re.sub(r"(?m)^\s*(?:approval_policy|approvals_reviewer|sandbox_mode)\s*=.*\n?", "", template)
+        lines = [
+            f'approval_policy = "{settings["approval_policy"]}"',
+            f'approvals_reviewer = "{settings["approvals_reviewer"]}"',
+            f'sandbox_mode = "{settings["sandbox_mode"]}"',
+        ]
+        return "\n".join(lines) + "\n\n" + template.lstrip("\n")
 
     def _summary(self, meta: dict[str, Any]) -> dict[str, Any]:
         return {**meta, "key": "" if not meta.get("key") else "*" * max(4, min(12, len(meta["key"]))) }
@@ -113,9 +133,10 @@ class ConfigStore:
             raise FileNotFoundError(profile_id)
         config_template = (directory / "config.toml").read_text(encoding="utf-8")
         auth_template = (directory / "auth.json").read_text(encoding="utf-8")
-        config, auth = self.render(config_template, auth_template, meta.get("key", ""), meta.get("url", ""))
+        config, auth = self.render(config_template, auth_template, meta.get("key", ""), meta.get("url", ""), meta.get("permission_mode", DEFAULT_PERMISSION_MODE))
         return {
             **meta,
+            "permission_mode": meta.get("permission_mode", DEFAULT_PERMISSION_MODE),
             "config_template": config,
             "auth_template": auth,
         }
@@ -124,6 +145,7 @@ class ConfigStore:
         name = str(payload.get("name", "")).strip()
         key = str(payload.get("key", ""))
         url = str(payload.get("url", "")).strip()
+        permission_mode = str(payload.get("permission_mode", DEFAULT_PERMISSION_MODE))
         config_template = self._to_template(str(payload.get("config_template", "")), key, url)
         auth_template = self._to_auth_template(str(payload.get("auth_template", "")), key)
         if not name:
@@ -132,14 +154,14 @@ class ConfigStore:
             raise ValidationError("URL 不能为空")
         if not config_template.strip() or not auth_template.strip():
             raise ValidationError("两个模板都不能为空")
-        self.render(config_template, auth_template, key, url)
+        self.render(config_template, auth_template, key, url, permission_mode)
         profile_id = profile_id or uuid.uuid4().hex
         directory = self._profile_dir(profile_id)
         if directory.exists() and not (directory / "meta.json").exists():
             raise ValidationError("配置目录无效")
         now = utc_now()
         previous = self._read_json(directory / "meta.json", {}) or {}
-        meta = {"id": profile_id, "name": name, "key": key, "url": url, "created_at": previous.get("created_at", now), "updated_at": now}
+        meta = {"id": profile_id, "name": name, "key": key, "url": url, "permission_mode": permission_mode, "created_at": previous.get("created_at", now), "updated_at": now}
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "config.toml").write_text(config_template, encoding="utf-8")
         (directory / "auth.json").write_text(auth_template, encoding="utf-8")
@@ -182,7 +204,7 @@ class ConfigStore:
 
     def activate(self, profile_id: str) -> dict[str, Any]:
         profile = self.get_profile(profile_id)
-        config, auth = self.render(profile["config_template"], profile["auth_template"], profile["key"], profile["url"])
+        config, auth = self.render(profile["config_template"], profile["auth_template"], profile["key"], profile["url"], profile.get("permission_mode", DEFAULT_PERMISSION_MODE))
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         backup_id = f"{timestamp}-{uuid.uuid4().hex[:8]}"
         backup = self.backups_dir / backup_id

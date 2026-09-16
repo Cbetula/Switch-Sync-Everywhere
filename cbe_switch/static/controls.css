@@ -1,0 +1,75 @@
+/* Low specificity keeps individual control styles in style.css authoritative. */
+:where(button) {
+  appearance: none;
+  border: 1px solid #364454;
+  border-radius: 5px;
+  padding: 9px 14px;
+  background: #1b2430;
+  color: #dbe6f0;
+  font: inherit;
+  cursor: pointer;
+}
+
+:where(button:hover) {
+  background: #263344;
+}
+
+button:focus-visible {
+  outline: 2px solid #9cc8ef;
+  outline-offset: 2px;
+}
+
+.actions button,
+.bottom button {
+  min-height: 38px;
+  font-size: inherit;
+  line-height: inherit;
+  box-shadow: none;
+}
+
+#newBtn,
+.bottom .save-button,
+.actions .apply-button {
+  background: #3974a8;
+  border-color: #4e8bc2;
+  color: #fff;
+  box-shadow: none;
+}
+
+#newBtn:hover,
+.bottom .save-button:hover,
+.actions .apply-button:hover {
+  background: #1b2b3b;
+  border-color: #71a9d8;
+  color: #e7edf5;
+  box-shadow: 0 0 0 1px #71a9d8 inset;
+}
+
+.actions .tool-button {
+  border: 1px solid #364454;
+  background: #1b2430;
+}
+
+.actions .tool-button:hover {
+  border-color: #6e9bc0;
+  background: #263344;
+}
+
+.actions .tool-button.danger:hover {
+  border-color: #75434b;
+  background: #261b20;
+}
+
+.permission-field {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.permission-field legend,
+.permission-option strong,
+.permission-option span {
+  font-size: inherit;
+  line-height: inherit;
+}
