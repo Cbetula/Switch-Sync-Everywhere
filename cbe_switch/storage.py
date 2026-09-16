@@ -60,6 +60,8 @@ class ConfigStore:
     def render(self, config_template: str, auth_template: str, key: str, url: str) -> tuple[str, str]:
         # These values must stay parameterized so credentials and endpoints are
         # never baked into a profile template.
+        config_template = self._to_template(config_template, key, url)
+        auth_template = self._to_auth_template(auth_template, key)
         if not re.search(r"(?m)^\s*base_url\s*=\s*[\"']\s*{{\s*URL\s*}}\s*[\"']", config_template):
             raise ValidationError("config.toml 的 base_url 必须使用 {{URL}} 宏")
         if not re.search(r"(?m)^\s*experimental_bearer_token\s*=\s*[\"']\s*{{\s*KEY\s*}}\s*[\"']", config_template):
